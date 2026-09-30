@@ -8,7 +8,7 @@ import { compareImages } from './diff.js';
 import { computeStructuralEmbedding, cosineSimilarity } from './perceptual.js';
 import { resolveOutputPaths, imageName, ensureDir, fileExists } from './baseline.js';
 import { resolveViewport, VIEWPORT_PRESETS } from './viewports.js';
-import { summarize, writeJsonReport, writeMarkdownReport } from './report.js';
+import { summarize, writeJsonReport, writeMarkdownReport, writeHtmlReport } from './report.js';
 import { login } from './auth.js';
 import type { AuthConfig, PageTarget, RunConfig, VisualDiffResult, Viewport } from './types.js';
 
@@ -170,12 +170,14 @@ async function runConfig(config: RunConfig): Promise<void> {
   const paths = resolveOutputPaths(outputDir);
   writeJsonReport(summary, path.join(paths.reportsDir, 'latest.json'));
   writeMarkdownReport(summary, path.join(paths.reportsDir, 'latest.md'));
+  writeHtmlReport(summary, path.join(paths.reportsDir, 'latest.html'));
 
   console.log('');
   console.log(
     `Total: ${summary.totalTests}  Passed: ${summary.passed}  Failed: ${summary.failed}  New baselines: ${summary.newBaselines}`
   );
   console.log(`Report: ${path.join(paths.reportsDir, 'latest.md')}`);
+  console.log(`Report (visual): ${path.join(paths.reportsDir, 'latest.html')}`);
 
   if (summary.failed > 0) process.exitCode = 1;
 }

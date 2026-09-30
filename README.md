@@ -136,6 +136,50 @@ npx tsx src/cli.ts test --url https://your-app/#/summary --name summary \
 - `pixelSensitivity` — pixelmatch's own per-pixel color-difference sensitivity (0-1, default
   0.1); lower = stricter about anti-aliasing.
 
+## Masking strategy — pixels have no meaning, so someone has to decide
+
+Pixel comparison cannot, by itself, tell "the layout broke" apart from "the data legitimately
+changed" — a pixel is just a color, it carries no semantics. A dashboard showing real or seeded
+transaction data will *always* produce pixel differences between runs, even when nothing is
+actually wrong. This is not a bug to fix in the diff algorithm; it's a property of pixel diffing
+in general, and every serious visual-regression tool (Percy, Chromatic, BackstopJS, Playwright's
+own `toHaveScreenshot()`) handles it the same way: **someone tells the tool, per page, which
+regions are expected to vary.** That "someone" — a human writing the config, or an orchestrator
+generating it — has to know the nature of the screen being tested. This tool has no way to infer
+that on its own, so treat it as a required input, not an afterthought: a static settings page and
+a live transactions dashboard need different masking strategies even if they're tested with the
+same command.
+
+**How `maskSelectors` actually works** — Playwright paints a solid box directly onto the page
+*before* the screenshot bytes are captured (not a post-hoc crop). Because that box is the same
+solid color on every run regardless of what text/numbers are underneath, `pixelmatch` sees zero
+difference there no matter how the real data changes. It neutralizes *content*, not layout: the
+box's position and size are still captured and compared, so a real regression that shifts or
+resizes that element is still caught.
+
+**How `hideSelectors` actually works** — sets `visibility: hidden`, not `display: none`. That
+distinction matters: `visibility:hidden` keeps the element's layout space reserved, so hiding a
+banner or widget doesn't itself shift everything below it (which would be a false positive of
+your own making). Use it for things that shouldn't be part of the visual check at all (ads, live
+chat widgets, anything that loads asynchronously and causes flakiness).
+
+**Prefer masking leaves, not whole containers.** Masking an entire transaction-list `<div>`
+neutralizes real layout bugs inside it (an icon overlapping text, broken spacing) along with the
+data. Masking just the dynamic text nodes (`.transaction-amount`, `.transaction-date`) instead
+keeps the surrounding card/row structure — borders, icons, alignment — under real test.
+
+**What masking cannot fix: reflow.** Masking freezes how a region *looks*, not how much *space*
+it takes up. If the dynamic content changes the number of rows (a new transaction appears), the
+page height changes and everything below it shifts by a few pixels — that shows up as dozens of
+small, scattered diff regions even with masking in place, because the shift happens *outside* any
+masked box. Two ways to actually solve that, not just work around it:
+- Raise `threshold` for that specific page to tolerate normal reflow noise (blunt, easy, imprecise).
+- Intercept the page's API calls (Playwright's `page.route()`) and serve a fixed JSON fixture
+  instead of live data, so the row count — and therefore the layout — never changes between runs.
+  This is the robust fix; masking alone cannot achieve it. Not implemented in this CLI yet, but
+  it is the natural next enhancement given the app under test is expected to be Playwright-driven
+  end to end.
+
 ## Output layout
 
 ```
@@ -146,6 +190,7 @@ npx tsx src/cli.ts test --url https://your-app/#/summary --name summary \
   reports/
     latest.json
     latest.md
+    latest.html   <- baseline/current/diff images side by side, with regions drawn as overlays
 ```
 
 ## What's real here vs. the original framework

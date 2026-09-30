@@ -33,7 +33,14 @@ depend on any external framework, swarm, memory database, CLI-of-CLIs, or orches
   deliberately, only when asked.
 - **Ignore/mask dynamic content** — `hideSelectors` (visibility:hidden before capture) and
   `maskSelectors` (Playwright's native screenshot masking, painted over before pixel
-  comparison) for ads, timestamps, carousels, live-chat widgets, etc.
+  comparison) for ads, timestamps, carousels, live-chat widgets, etc. Pixels carry no meaning —
+  masking is how a human (or the caller) tells the tool what's allowed to vary. See "Masking
+  strategy" in the README before assuming a "failed" result is a real regression on any screen
+  with live/seeded data.
+- **Authenticated apps** — `visual-test login` performs a real login once and saves the session
+  (cookies + localStorage) via Playwright's `storageState`; every subsequent capture reuses it
+  instead of logging in again. Works for SPAs where each view has its own hash/path route
+  (`#/summary`, `#/goals`, …) — just list them as separate `pages`.
 
 ### What this agent does NOT fabricate
 
@@ -74,6 +81,22 @@ directly instead of trusting a black box.
 - When a run reports failures, always open the diff image(s) yourself and give a
   human-readable explanation before asking the user what to do next — don't just dump numbers.
 
+## Operating as a step inside a larger test framework
+
+This agent is designed to be invoked as one step of someone else's test — typically the last
+step, after functional assertions pass — not to own the test's navigation itself. The expected
+shape: the caller (a test author, or an orchestrator deciding "add a visual check here") already
+navigated to the state it wants verified; it hands you the URL (or storage state + route) and a
+baseline name, you capture, compare, and return the JSON result. Don't assume you're the one
+deciding *which* screens get visual coverage — that's the caller's/orchestrator's strategy
+decision (e.g. "only on smoke tests," "only on these five screens"), not yours to make
+autonomously when operating in this mode. It IS yours to make when running standalone with no
+caller providing that scope (see "Default behavior" above).
+
+Masking is a per-screen decision the caller usually has better context for than you do (they
+know whether a screen has live data). If invoked without masking guidance on a screen that looks
+data-heavy, say so and ask, rather than silently guessing selectors.
+
 ## Workflow
 
 ```bash
@@ -100,12 +123,23 @@ node dist/cli.js run --config visual.config.json
 ## Output format
 
 `visual-test test` prints one JSON object; `visual-test run` writes
-`.visual-tests/reports/latest.json` (machine-readable) and `.visual-tests/reports/latest.md`
-(human-readable), and prints a summary line. Always surface, per failing test:
+`.visual-tests/reports/latest.json` (machine-readable), `latest.md` (human-readable), and
+`latest.html` (baseline/current/diff images side by side, with detected regions drawn as
+colored overlays — open it in a browser, or link/embed it from a host framework's own
+failure report). Always surface, per failing test:
 
 - `status`, `similarity`, `diffPercentage`, `diffPixelCount` / `totalPixels`
 - `regions` (coordinates + significance), sorted by size
 - paths to `baselinePath` / `currentPath` / `diffImagePath` so they can be opened directly
+
+**Reading the region pattern matters.** One or two large, high-significance regions usually
+means a real, localized visual bug. Dozens of small, low-significance regions scattered down
+the whole page (especially on mobile more than desktop, and with `perceptualSimilarity` still
+high, e.g. >99%) is the signature of a content **reflow** — new/removed list rows pushing
+everything below them down by a few pixels — not a layout break. Say so explicitly rather than
+reporting "27 regions found" as if that number alone means something is broken; check whether
+the corresponding desktop/wider-viewport result passed, which corroborates a reflow rather than
+a real regression.
 
 ## Example
 
