@@ -1,0 +1,30 @@
+{
+  "name": "visual-testing-agent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone visual regression testing tool, extracted and made framework-independent from agentic-qe's qe-visual-tester subagent.",
+  "bin": {
+    "visual-test": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "tsx src/cli.ts",
+    "test:example": "tsx src/cli.ts run --config visual.config.example.json"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "pixelmatch": "^5.3.0",
+    "playwright": "^1.47.0",
+    "pngjs": "^7.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/pngjs": "^6.0.4",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "baseUrl": "https://example.com",
+  "outputDir": ".visual-tests",
+  "threshold": 0.01,
+  "pixelSensitivity": 0.1,
+  "viewports": ["mobile-m", "tablet", "desktop-l"],
+  "pages": [
+    {
+      "name": "homepage",
+      "url": "/",
+      "fullPage": true,
+      "hideSelectors": [".timestamp", "[data-testid='ad-banner']"],
+      "maskSelectors": [".live-chat-widget"]
+    },
+    {
+      "name": "pricing",
+      "url": "/pricing",
+      "fullPage": true
+    }
+  ]
+}

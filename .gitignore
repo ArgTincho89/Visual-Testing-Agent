@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.visual-tests/current/
+.visual-tests/diffs/
+.visual-tests/reports/
+.visual-tests/auth/
+*.log
