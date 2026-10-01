@@ -6,8 +6,11 @@ A standalone visual regression testing tool, extracted from the `qe-visual-teste
 runs entirely on its own with three well-known open-source packages: **Playwright** (screenshot
 capture) and **pixelmatch** + **pngjs** (pixel-level diffing).
 
-See [`AGENT.md`](./AGENT.md) for the full agent persona/system-prompt you can hand to Claude
-(or any LLM agent runtime) to operate this tool autonomously.
+See [`skills/visual-regression-testing/SKILL.md`](./skills/visual-regression-testing/SKILL.md)
+for the decision layer on top of this tool — whether a screen deserves a visual checkpoint,
+which state to anchor it to, and how to mask dynamic content without over- or under-masking.
+This README covers the mechanics (CLI, config format, output); the skill covers the judgment
+calls a config file can't make for itself.
 
 ## Why this was rebuilt instead of copy-pasted
 
@@ -132,9 +135,20 @@ npx tsx src/cli.ts test --url https://your-app/#/summary --name summary \
 ```
 
 - `threshold` — max fraction of pixels allowed to differ before a test fails (the same
-  convention Playwright's `maxDiffPixelRatio` and BackstopJS use).
+  convention Playwright's `maxDiffPixelRatio` and BackstopJS use). Default `0.01`; tighten to
+  `0` for pixel-perfect requirements, loosen it for pages with legitimately dynamic layout.
 - `pixelSensitivity` — pixelmatch's own per-pixel color-difference sensitivity (0-1, default
   0.1); lower = stricter about anti-aliasing.
+
+### Defaults worth knowing
+
+- No baseline for a page/viewport combination → one is created automatically and the result
+  is reported as `baseline-created`, not a failure. This is expected on first run.
+- No `viewports` specified and nothing else to go on → `mobile-m`, `tablet`, and `desktop-l`
+  is a reasonable default set for "give me a full regression check."
+- A page can define `waitForSelector` (preferred — anchors to an observable state) or
+  `waitForTimeout` (a fixed fallback) before capture; prefer the former wherever the page
+  has something reliable to wait for.
 
 ## Masking strategy — pixels have no meaning, so someone has to decide
 
@@ -202,6 +216,17 @@ masked box. Two ways to actually solve that, not just work around it:
 | Diff regions | Fake coordinates derived from a hash | Real connected-component clustering of actual diff pixels |
 | "AI" comparison | Claims LLM-router analysis (framework-dependent, opt-in) | Real spatial-pooling structural-similarity heuristic + you (the agent) visually inspecting the diff image |
 | Baselines | SQLite-backed memory namespace | Plain PNG files on disk (portable, diffable, git-friendly) |
+
+## Limitations
+
+- Chromium only by default. Playwright supports Firefox/WebKit too, but cross-browser capture
+  isn't wired into the CLI yet — extend `capture.ts`'s `BrowserCapture` class if you need it.
+- No component-level state harness (hover/active/disabled) built in — drive it with
+  `waitForSelector` or page-interaction steps before capture.
+- No automatic accessibility or contrast checking — this tool is visual-diff only, by design,
+  to stay dependency-free and legible.
+- This CLI never fabricates a result: if it cannot capture or compare real pixels, it throws
+  an error instead of inventing a diff percentage.
 
 ## License / attribution
 
