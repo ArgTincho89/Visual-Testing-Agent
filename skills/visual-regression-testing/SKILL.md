@@ -127,6 +127,18 @@ coarsest container that visually contains the dynamic content.
   Confirm where the dynamic value's *own* boundary actually is before writing the selector
   — see Part 4.
 
+### Mask vs. hide
+
+Two different tools for two different problems. **Mask** a region whose content is
+meaningful but variable (a price, a name, a status badge) — it paints over the content so
+its *value* never causes a diff, while its *position and size* stay part of the check.
+**Hide** (`visibility: hidden`, not `display: none`, so the layout space stays reserved and
+nothing shifts) a region that shouldn't be part of the visual check **at all** — ads,
+live-chat widgets, anything that loads asynchronously and would cause flakiness independent
+of any real content change. Reach for hide when the honest answer to "what should this
+look like" is "nothing, it's noise"; reach for mask when the honest answer is "something
+specific, just not this exact value."
+
 ### Content count vs. content value
 
 Masking a value (a number, a name, a date) is different from masking row/item *presence*.
@@ -228,6 +240,17 @@ timing strategy alongside a stricter one that already exists for the same screen
    uses — a visual checkpoint's result should be legible next to the rest of that test
    case's result, not off in a separate, differently-shaped report.
 
+### Updating a baseline is a separate, human-gated decision
+
+A `failed` result means the current screen differs from the approved baseline — it does
+**not** mean the baseline is wrong. Never let a failure's own resolution be "accept the new
+screenshot as correct" without a person (or an agent explicitly authorized to approve visual
+changes, acting on a person's behalf) actually looking at the diff and confirming the new
+appearance is the intended one. An agent that silently re-baselines every failure turns the
+checkpoint into a no-op — every future real regression would also just look like "the
+baseline changed again," with no record of why. Record who approved the update and why,
+the same way any other intentional change to expected behavior gets recorded.
+
 ## Output contract — embedding a failure into your own report
 
 Every test result (one entry in a batch run's `reports/latest.json`, or the single JSON
@@ -274,7 +297,12 @@ not an explanation.
 - Many small, low-significance regions scattered through the frame, especially with
   perceptual similarity still high: usually a content *reflow* (something upstream changed
   row/item count or height), not a broken layout — corroborate against a less
-  content-dependent viewport/state before calling it a regression.
+  content-dependent viewport/state before calling it a regression. **No mask fixes this
+  after the fact**: masking freezes *appearance*, not the *space* content occupies, and a
+  changed row count shifts everything below it regardless of what's masked inside it. Fix it
+  upstream instead — anchor to a state where the count is also deterministic (Part 2), or
+  intercept the page's own data calls and serve a fixed fixture so the count never varies
+  between runs.
 - A "failed" result on a screen with any live/seeded data: open the actual baseline,
   current, and diff images before trusting the summary number. More than one failure that
   looked identical in a summary table turned out to have unrelated causes (a genuine
@@ -289,6 +317,13 @@ signal, region clustering for diff localization) — see this project's own `REA
 CLI, config format, and output contract. This skill is the decision
 layer on top of it: what to capture, what to ignore, and how to trust the result — the
 mechanics work whether this skill chooses the inputs or a human does.
+
+**This skill has nothing to execute against on its own.** It assumes that engine (or an
+equivalent Playwright+pixelmatch tool implementing the same `maskSelectors`/`hideSelectors`/
+output-contract shape above) is actually installed and reachable wherever the workflow runs
+— vendor or install it into the consuming project rather than assuming it's already there.
+A decision layer with no engine underneath it cannot produce a baseline, no matter how good
+the masking decision was.
 
 For an application whose login cannot be captured as a simple, replayable session
 (aggressive bot-detection, SSO flows that bind a security challenge to a specific browser
