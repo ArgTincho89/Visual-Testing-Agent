@@ -228,6 +228,38 @@ timing strategy alongside a stricter one that already exists for the same screen
    uses — a visual checkpoint's result should be legible next to the rest of that test
    case's result, not off in a separate, differently-shaped report.
 
+## Output contract — embedding a failure into your own report
+
+Every test result (one entry in a batch run's `reports/latest.json`, or the single JSON
+object a one-off capture returns) has this shape:
+
+| Field | Type | What it's for |
+|---|---|---|
+| `status` | `'baseline-created' \| 'baseline-updated' \| 'identical' \| 'passed' \| 'failed' \| 'size-mismatch'` | `failed` and `size-mismatch` are the only statuses worth surfacing as a regression; `baseline-created` is a first run, not a failure |
+| `passed` | `boolean` | Convenience flag already folding the above into a single check |
+| `similarity` / `diffPercentage` | `number` | Headline numbers for a summary row |
+| `perceptualSimilarity` | `number`, optional | The structural-similarity signal, when present — report it alongside, not instead of, `similarity` |
+| `baselinePath` / `currentPath` / `diffImagePath` | file paths (PNG) | The three images for a failing test — `diffImagePath` is absent on a `size-mismatch`, fall back to showing just baseline/current |
+| `regions` | `{x, y, width, height, diffPixelCount, significance}[]` | Diff regions in **pixel coordinates against the image's own full size**, not against your report's display size |
+
+To embed a failing result into your own HTML report:
+
+1. Resolve `baselinePath`/`currentPath`/`diffImagePath` relative to wherever *your* report
+   file will be written (they're absolute or tool-relative paths on disk, not already
+   relative to your output) and reference them with plain `<img src="...">` — they're static
+   PNGs.
+2. To draw a region as an overlay on top of the (CSS-scaled) image, convert its pixel box to
+   a percentage of the image's own `width`/`height` from the result (`left% = x/width*100`,
+   `top% = y/height*100`, same for `width`/`height`), then position an absolutely-placed
+   `div` at those percentages over the image — that keeps the overlay correct regardless of
+   how large your report actually renders the image. Color by `significance` (e.g. high =
+   red, medium = orange, low = yellow) so the worst regions read at a glance.
+3. Only build a diff card for `failed`/`size-mismatch` results — don't pad the report with
+   image triplets for passing tests.
+
+This repo's own `src/report.ts` (`writeHtmlReport`) is a working reference implementation of
+exactly this — read it if the table above leaves anything ambiguous, it's the ground truth.
+
 ## Part 7 — Reading a result
 
 There is no bundled semantic judgment ("is this a real regression or acceptable?") in the
