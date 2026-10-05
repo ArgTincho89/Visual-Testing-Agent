@@ -1,6 +1,6 @@
 ---
 name: visual-regression-testing
-description: Add a pixel-accurate visual regression checkpoint to a UI test case — decide whether it adds value, anchor it to a stable state, propose precise masks for dynamic content, verify them against the real rendered DOM, and create the baseline. Use when a test plan/design step is deciding whether a screen or state deserves visual coverage, or when implementing a test case that a design step has flagged for visual regression.
+description: Add a pixel-accurate visual regression checkpoint to a UI test case — decide whether it adds value, anchor it to a stable state, propose precise masks for dynamic content, verify them against the real rendered DOM, and create the baseline. Use when a test plan/design step is deciding whether a screen or state deserves visual coverage, or when implementing a test case that a design step has flagged for visual regression. Trigger: visual regression, visual testing, pixel diff, screenshot comparison, visual checkpoint, UI regression, baseline screenshot, masking dynamic content.
 ---
 
 # Visual regression testing
@@ -19,6 +19,58 @@ against two real applications, iterating on masking mistakes until they stopped 
 Every rule below exists because a specific, observed failure mode produced a wrong result
 first.
 
+## Before you start
+
+This skill is the decision layer; it has nothing to execute against on its own. It assumes
+a Playwright + `pixelmatch` capture/compare tool is installed and reachable wherever the
+workflow runs — vendor or install one into the consuming project, don't assume it already
+exists there. The minimum shape such a tool needs to implement for everything below to
+apply:
+
+- A capture+compare command/function taking a URL (or an already-navigated live page), a
+  viewport, and two selector lists — `maskSelectors` (paint over, keep position/size) and
+  `hideSelectors` (`visibility:hidden`, keep layout space) — plus a `threshold` for the
+  allowed differing-pixel fraction.
+- A missing baseline creates one and reports that as a non-failure, not an error.
+- A result per test shaped like the Output contract at the end of this document (status,
+  similarity, image paths, diff regions).
+
+Example invocation shape (adapt to whatever tool actually implements this):
+
+```bash
+visual-test test --url <url> --name <baseline-name> --viewport <preset|WxHxScale> \
+  --mask <selector> --mask <selector> --threshold 0.01 [--update-baseline]
+```
+
+```json
+{
+  "baseUrl": "https://example.com",
+  "viewports": ["mobile-m", "desktop-l"],
+  "pages": [
+    {
+      "name": "orders-list",
+      "url": "/orders",
+      "maskSelectors": [".order-row .amount"],
+      "hideSelectors": [".ad-banner"]
+    }
+  ]
+}
+```
+
+For an application whose login can't be captured as a simple, replayable session
+(aggressive bot-detection, SSO flows that bind a security challenge to a specific browser
+instance), the underlying tool's session/storageState mechanism may not be enough. The
+general pattern that resolves this: drive a **real, persistent browser profile** a human has
+already authenticated once, rather than a fresh session recreated per run — and treat that
+profile as sensitive, shared state: never run two automated sessions against the same
+on-disk profile concurrently, and prefer working against a disposable copy of it rather than
+the authenticated original, so a crashed or killed run never corrupts the one thing a human
+had to do by hand.
+
+If this skill is being read from inside the VisualTestingAgent project itself, its
+`README.md` has the complete CLI/config reference this is condensed from — useful for exact
+flag names, but not required to apply the judgment calls below.
+
 ## Who uses which part of this skill
 
 Visual regression is a **step added to an existing test case**, not a test suite of its
@@ -30,7 +82,11 @@ test-automation pipeline:
    (reading the feature/requirements, not driving a browser), using the "Is this checkpoint
    worth it" and "Which state" sections below. The output is a decision recorded against
    the test case: yes/no, and if yes, *at which step* in the test's existing action
-   sequence the checkpoint happens (see "Choosing the anchor state").
+   sequence the checkpoint happens (see "Choosing the anchor state"). Anything else that's
+   a judgment call about test strategy rather than about pixels — which viewports matter for
+   this screen, how often this checkpoint should run — belongs here too, with whatever
+   criteria that role already uses for the rest of the test suite. This skill doesn't set
+   that criteria; it only needs to be told the result.
 2. **Deciding WHICH SELECTORS to mask, and executing the capture.** This needs a live
    browser against the real (or realistic) application — reading a spec is not enough, the
    masking decisions in this skill require inspecting the actual rendered DOM. This belongs
@@ -238,7 +294,8 @@ timing strategy alongside a stricter one that already exists for the same screen
 9. **Create the baseline** and wire the comparison into the test's own execution/report
    flow, using whatever artifact/report conventions the surrounding test suite already
    uses — a visual checkpoint's result should be legible next to the rest of that test
-   case's result, not off in a separate, differently-shaped report.
+   case's result, not off in a separate, differently-shaped report (see the Output contract
+   at the end of this document for the exact fields to embed).
 
 ### Updating a baseline is a separate, human-gated decision
 
@@ -250,6 +307,72 @@ appearance is the intended one. An agent that silently re-baselines every failur
 checkpoint into a no-op — every future real regression would also just look like "the
 baseline changed again," with no record of why. Record who approved the update and why,
 the same way any other intentional change to expected behavior gets recorded.
+
+## Part 7 — Reading a result
+
+There is no bundled semantic judgment ("is this a real regression or acceptable?") in the
+pixel-diff mechanics themselves, and there shouldn't be — that judgment belongs to whichever
+agent is consuming the result, reasoning over the actual images, not to a black-box score.
+For any failing result: open the baseline, current, and diff images and describe in plain
+language what changed before recommending approve/reject/investigate. A percentage alone is
+not an explanation.
+
+- One or two large, high-significance diff regions: investigate as a real, localized
+  regression.
+- Many small, low-significance regions scattered through the frame, especially with
+  perceptual similarity still high: usually a content *reflow* (something upstream changed
+  row/item count or height), not a broken layout — corroborate against a less
+  content-dependent viewport/state before calling it a regression. **No mask fixes this
+  after the fact**: masking freezes *appearance*, not the *space* content occupies, and a
+  changed row count shifts everything below it regardless of what's masked inside it. Fix it
+  upstream instead — anchor to a state where the count is also deterministic (Part 2), or
+  intercept the page's own data calls and serve a fixed fixture so the count never varies
+  between runs.
+- A "failed" result on a screen with any live/seeded data: open the actual baseline,
+  current, and diff images before trusting the summary number. More than one failure that
+  looked identical in a summary table turned out to have unrelated causes (a genuine
+  regression, a baseline captured mid-load, a stale report from an earlier run) once the
+  images were actually opened.
+
+## Example — putting it together
+
+A fictional illustration of the workflow (Part 6) end to end:
+
+**Screen**: an internal "Order history" table, one row per order, with a status badge
+(colored by state) and a computed total per row.
+
+1. **Worth it?** (Part 1) Yes — the status badge's color is a computed visual state no
+   functional assertion currently checks, and a past bug shipped a badge with the wrong
+   color for a valid status. Recorded: yes, anchor at the "order list loaded" state.
+2. **Anchor state** (Part 2) The functional suite already filters to a seeded customer with
+   exactly 3 orders in fixed states (`seeded-customer-42`) for its own assertions — reuse
+   that precondition instead of the unfiltered, constantly-growing default list.
+3. **Reach the state** — same filter action the functional test already performs.
+4. **Enumerate dynamic content** — order IDs, dates, computed totals, and the status
+   badges' underlying values all vary run to run even for this seeded customer (new test
+   orders get added over time); the column headers, table chrome, and page title do not.
+5. **Mask, verified against the DOM** (Parts 3-4) — per-cell masks on the date, total, and
+   status-badge columns (not the whole row: the row's layout and the badge's shape/color
+   *rendering* stay checkable), confirmed against the real markup that the badge's color
+   class lives on the `<span>` itself, not a parent that also contains the row's action
+   menu.
+6. **Capture** anchored to the orders-list endpoint's response settling (Part 5), not a
+   fixed wait.
+7. **Sanity check** — masked area came out to ~9% of the frame; low enough that the capture
+   still exercises real layout, not mostly blank/masked space.
+8. **Rationale recorded** — one line per masked selector, referencing the seeded-customer
+   fixture and why each column is dynamic.
+9. **Baseline created**, wired into the same report the functional assertions for this test
+   case already produce.
+
+**A later run fails**: `status: 'failed'`, one high-significance region over the status
+badge of the second row. Opening the three images (Part 7) shows the badge rendering with
+the *previous* state's color for an order whose status just changed — not a false positive
+from reflow (row count and positions are identical) and not masking gone wrong (the mask
+covers the badge's value, not its color-rendering logic). Read as a real regression: the
+badge's color mapping broke for this transition. Per "Updating a baseline," this is
+investigated and fixed upstream — the baseline is not touched just because the test went
+red.
 
 ## Output contract — embedding a failure into your own report
 
@@ -280,57 +403,5 @@ To embed a failing result into your own HTML report:
 3. Only build a diff card for `failed`/`size-mismatch` results — don't pad the report with
    image triplets for passing tests.
 
-This repo's own `src/report.ts` (`writeHtmlReport`) is a working reference implementation of
-exactly this — read it if the table above leaves anything ambiguous, it's the ground truth.
-
-## Part 7 — Reading a result
-
-There is no bundled semantic judgment ("is this a real regression or acceptable?") in the
-pixel-diff mechanics themselves, and there shouldn't be — that judgment belongs to whichever
-agent is consuming the result, reasoning over the actual images, not to a black-box score.
-For any failing result: open the baseline, current, and diff images and describe in plain
-language what changed before recommending approve/reject/investigate. A percentage alone is
-not an explanation.
-
-- One or two large, high-significance diff regions: investigate as a real, localized
-  regression.
-- Many small, low-significance regions scattered through the frame, especially with
-  perceptual similarity still high: usually a content *reflow* (something upstream changed
-  row/item count or height), not a broken layout — corroborate against a less
-  content-dependent viewport/state before calling it a regression. **No mask fixes this
-  after the fact**: masking freezes *appearance*, not the *space* content occupies, and a
-  changed row count shifts everything below it regardless of what's masked inside it. Fix it
-  upstream instead — anchor to a state where the count is also deterministic (Part 2), or
-  intercept the page's own data calls and serve a fixed fixture so the count never varies
-  between runs.
-- A "failed" result on a screen with any live/seeded data: open the actual baseline,
-  current, and diff images before trusting the summary number. More than one failure that
-  looked identical in a summary table turned out to have unrelated causes (a genuine
-  regression, a baseline captured mid-load, a stale report from an earlier run) once the
-  images were actually opened.
-
-## Mechanics
-
-The actual capture/compare/mask/baseline-lifecycle engine is a standalone tool (Playwright
-for capture, `pixelmatch`+`pngjs` for pixel diffing, a lightweight perceptual-similarity
-signal, region clustering for diff localization) — see this project's own `README.md` for its
-CLI, config format, and output contract. This skill is the decision
-layer on top of it: what to capture, what to ignore, and how to trust the result — the
-mechanics work whether this skill chooses the inputs or a human does.
-
-**This skill has nothing to execute against on its own.** It assumes that engine (or an
-equivalent Playwright+pixelmatch tool implementing the same `maskSelectors`/`hideSelectors`/
-output-contract shape above) is actually installed and reachable wherever the workflow runs
-— vendor or install it into the consuming project rather than assuming it's already there.
-A decision layer with no engine underneath it cannot produce a baseline, no matter how good
-the masking decision was.
-
-For an application whose login cannot be captured as a simple, replayable session
-(aggressive bot-detection, SSO flows that bind a security challenge to a specific browser
-instance) the underlying tool's own session/storageState mechanism may not be sufficient.
-The general pattern that resolves this: drive a **real, persistent browser profile** that a
-human has already authenticated once, rather than a fresh/ephemeral session recreated per
-run — and treat that profile as sensitive, shared state: never run two automated sessions
-against the same on-disk profile concurrently, and prefer working against a disposable copy
-of it rather than the authenticated original, so a crashed or killed run never corrupts the
-one thing a human had to do by hand.
+If this skill is being read from inside the VisualTestingAgent project itself, its own
+`src/report.ts` (`writeHtmlReport`) is a working reference implementation of exactly this.
